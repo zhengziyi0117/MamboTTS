@@ -19,6 +19,10 @@ class FakeEngine:
         self.gate = None
         self.started = threading.Event()
         self.last_options = {}
+        self.progress = None
+
+    def get_progress(self, job_id):
+        return self.progress
 
     def is_api_running(self, **kwargs):
         return self.online
@@ -124,6 +128,25 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 429)
         statuses = [job["status"] for job in self.app.state.jobs.jobs.values()]
         self.assertEqual(statuses.count("running"), 1)
+
+    def test_live_progress_queue_position_and_final_timings(self):
+        self.engine.gate = threading.Event()
+        self.engine.progress = {"stage": "semantic", "total_segments": 2,
+                                "completed_segments": 1, "current_tokens": 64,
+                                "timings": {"text": 0.12, "semantic": 1.3}}
+        first = self.generate()
+        self.assertTrue(self.engine.started.wait(timeout=1))
+        self.assertEqual(self.engine.last_options["request_id"], first)
+        second = self.generate()
+        running = self.client.get(f"/api/jobs/{first}").json()
+        self.assertEqual(running["progress"]["completed_segments"], 1)
+        self.assertEqual(running["progress"]["current_tokens"], 64)
+        queued = self.client.get(f"/api/jobs/{second}").json()
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(queued["queue_ahead"], 1)
+        self.engine.gate.set()
+        final = self.wait_job(first)
+        self.assertEqual(final["record"]["timings"]["semantic"], 1.3)
 
     def test_unknown_audio_and_path_traversal_are_not_served(self):
         self.assertEqual(self.client.get("/api/audio/" + "a" * 32).status_code, 404)

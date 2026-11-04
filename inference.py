@@ -1,6 +1,7 @@
 import os
 import logging
 import requests
+import time
 
 from engine_contract import (
     SUPPORTED_LANGS, DEFAULT_REF_TEXT, CUT_PUNC, DEFAULT_API_URL, REF_WAV,
@@ -54,6 +55,23 @@ class TTSClient:
         _base_dir = os.path.dirname(os.path.abspath(__file__))
         self.default_ref_audio = os.path.join(_base_dir, "models", REF_WAV)
         self.default_ref_text = DEFAULT_REF_TEXT
+        self._progress_retry_after = 0
+
+    def get_progress(self, job_id):
+        """旧版引擎没有进度接口时短暂降级；查询失败不影响生成。"""
+        if time.monotonic() < self._progress_retry_after:
+            return None
+        try:
+            response = requests.get(f"{self.api_url.rstrip('/')}/mambo/progress/{job_id}",
+                                    timeout=0.5, proxies={"http": None, "https": None})
+            if response.status_code == 404:
+                self._progress_retry_after = time.monotonic() + 30
+                return None
+            response.raise_for_status()
+            progress = response.json().get("progress")
+            return progress if isinstance(progress, dict) else None
+        except (requests.RequestException, ValueError, AttributeError):
+            return None
 
     def set_log_handler(self, handler):
         """注入日志回调，handler 签名为 handler(level: str, message: str)。
@@ -116,7 +134,7 @@ class TTSClient:
 
     def generate_speech(self, text, save_path, ref_audio="", prompt_text="",
                         text_lang="zh", prompt_lang="zh", speed=1.0, api_url=None,
-                        segmentation="sentence"):
+                        segmentation="sentence", request_id=None):
         """
         调用 GPT-SoVITS 本地 API 生成语音。
         api_url: 显式快照，避免合成进行中主线程修改 self.api_url 引发竞态。
@@ -201,7 +219,8 @@ class TTSClient:
             # proxies=None 强制直连：本机代理工具（Clash/ghost 等）会劫持
             # 127.0.0.1 流量并在长合成期间掐断连接（ChunkedEncodingError）。
             # stream=True + iter_content 边下边写：几十 MB 的 WAV 不必整体进内存
-            with requests.post(f"{base_url}/", json=params, stream=True,
+            headers = {"X-Mambo-Job-ID": request_id} if request_id else {}
+            with requests.post(f"{base_url}/", json=params, stream=True, headers=headers,
                                timeout=(10, read_timeout),
                                proxies={"http": None, "https": None}) as response:
                 if response.status_code == 200:

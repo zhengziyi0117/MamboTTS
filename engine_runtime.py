@@ -3,10 +3,13 @@ from collections import OrderedDict
 from contextvars import ContextVar
 from functools import wraps
 import importlib.util
+import inspect
 from pathlib import Path
 import re
 import sys
 import threading
+
+from engine_progress import EngineProgress, install_progress_api
 
 
 def file_signature(path):
@@ -31,14 +34,40 @@ class BoundedCache:
         return value
 
 
+def optimize_bert(api):
+    """只取编码层特征，跳过未使用的 MLM 头，并在原设备展开音素。"""
+    if not hasattr(api, "bert_model"):
+        return
+    api.bert_model = api.bert_model.base_model
+    original_feature = api.get_bert_feature
+
+    @wraps(original_feature)
+    def get_bert_feature(text, word2ph):
+        torch = api.torch
+        with torch.no_grad():
+            inputs = {key: value.to(api.device)
+                      for key, value in api.tokenizer(text, return_tensors="pt").items()}
+            output = api.bert_model(**inputs, output_hidden_states=True)
+            hidden = output["hidden_states"][-3][0, 1:-1]
+            assert len(word2ph) == len(text) == hidden.shape[0]
+            repeats = torch.tensor(word2ph, device=hidden.device, dtype=torch.long)
+            return torch.repeat_interleave(hidden, repeats, dim=0, output_size=sum(word2ph)).T
+
+    api.get_bert_feature = get_bert_feature
+
+
 def install_optimizations(api):
     """限定缓存大小；参考文件或模型变化后自动失效。"""
     reference = ContextVar("mambo_reference", default=None)
     mixed_text = ContextVar("mambo_mixed_text", default=False)
     lock = threading.RLock()
+    progress = EngineProgress()
+    token_counter = ContextVar("mambo_token_counter", default=None)
     feature_cache = BoundedCache(1)
+    semantic_cache = BoundedCache(1)
     spec_cache = BoundedCache(2)
     phone_cache = BoundedCache(8)
+    optimize_bert(api)
 
     original_clean = api.clean_text
 
@@ -57,6 +86,7 @@ def install_optimizations(api):
 
     @wraps(original_phones)
     def get_phones_and_bert(text, language, version, final=False):
+        progress.update("text")
         def compute():
             mixed = bool(re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", text)
                          and re.search(r"[A-Za-z]", text))
@@ -95,15 +125,100 @@ def install_optimizations(api):
 
     api.ssl_model.model.forward = ssl_forward
     original_tts = api.get_tts_wav
+    tts_signature = inspect.signature(original_tts)
+
+    def hook_speaker(speaker):
+        vq = speaker.sovits.vq_model
+        if not getattr(vq, "_mambo_hooked", False):
+            original_latent = vq.extract_latent
+            original_decode = getattr(vq, "decode", None)
+
+            @wraps(original_latent)
+            def extract_latent(*args, **kwargs):
+                key = reference.get()
+                if key is None:
+                    return original_latent(*args, **kwargs)
+                return semantic_cache.get(key, lambda: original_latent(*args, **kwargs))
+
+            @wraps(original_decode)
+            def decode(*args, **kwargs):
+                progress.update("vocoder")
+                return original_decode(*args, **kwargs)
+
+            vq.extract_latent = extract_latent
+            if original_decode is not None:
+                vq.decode = decode
+            vq._mambo_hooked = True
+
+        model = speaker.gpt.t2s_model.model
+        if not getattr(model, "_mambo_hooked", False):
+            original_infer = model.infer_panel
+
+            @wraps(original_infer)
+            def infer_panel(*args, **kwargs):
+                if progress.current.get() is None:
+                    return original_infer(*args, **kwargs)
+                counter = [0]
+                token = token_counter.set(counter)
+                progress.update("semantic", current_tokens=0)
+                try:
+                    return original_infer(*args, **kwargs)
+                finally:
+                    progress.update(current_tokens=counter[0])
+                    token_counter.reset(token)
+
+            model.infer_panel = infer_panel
+            predictor = getattr(model, "ar_predict_layer", None)
+            if predictor is not None:
+                original_predict = predictor.forward
+
+                @wraps(original_predict)
+                def predict(*args, **kwargs):
+                    result = original_predict(*args, **kwargs)
+                    counter = token_counter.get()
+                    if counter is not None:
+                        counter[0] += 1
+                        if counter[0] % 16 == 0:
+                            progress.update(current_tokens=counter[0])
+                    return result
+
+                predictor.forward = predict
+            model._mambo_hooked = True
+
+    if hasattr(api, "pack_audio"):
+        original_audio = api.pack_audio
+
+        @wraps(original_audio)
+        def pack_audio(*args, **kwargs):
+            result = original_audio(*args, **kwargs)
+            # 已经过 .cpu() 同步和 PCM 转换，才算这段音频真正完成。
+            progress.segment_done()
+            return result
+
+        api.pack_audio = pack_audio
+
+    if hasattr(api, "pack_wav"):
+        original_pack = api.pack_wav
+
+        @wraps(original_pack)
+        def pack_wav(*args, **kwargs):
+            progress.update("packing")
+            return original_pack(*args, **kwargs)
+
+        api.pack_wav = pack_wav
 
     @wraps(original_tts)
     def get_tts_wav(ref_wav_path, *args, **kwargs):
+        bound = tts_signature.bind(ref_wav_path, *args, **kwargs)
+        text = bound.arguments.get("text", "")
+        progress.update(total_segments=sum(any(c.isalnum() for c in line) for line in text.split("\n")))
         iterator = original_tts(ref_wav_path, *args, **kwargs)
         while True:
             # StreamingResponse 可能在不同线程里逐次 next()。ContextVar 必须
             # 在同一次 next() 内 set/reset，不能跨 yield 留下线程上下文。
             with lock:
-                speaker = api.speaker_list[kwargs.get("spk", "default")]
+                speaker = api.speaker_list[bound.arguments.get("spk", "default")]
+                hook_speaker(speaker)
                 key = (file_signature(ref_wav_path), id(speaker.sovits.vq_model),
                        speaker.sovits.hps.data.sampling_rate)
                 token = reference.set(key)
@@ -116,6 +231,7 @@ def install_optimizations(api):
             yield chunk
 
     api.get_tts_wav = get_tts_wav
+    return progress
 
 
 def main():
@@ -125,8 +241,9 @@ def main():
     api = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = api
     spec.loader.exec_module(api)
-    install_optimizations(api)
-    print("[优化] 已启用参考 HuBERT / 频谱 / 文本特征缓存及中英短词停顿修正。", flush=True)
+    progress = install_optimizations(api)
+    install_progress_api(api.app, progress)
+    print("[优化] 已启用 BERT 编码优化、参考特征缓存、中英短词修正及实时进度。", flush=True)
     import uvicorn
     uvicorn.run(api.app, host=api.host, port=api.port, workers=1)
 

@@ -130,7 +130,17 @@ class SpeechJobs:
             start = job.pop("started", None)
             if start is not None and job["status"] == "running":
                 job["elapsed"] = round(time.monotonic() - start, 1)
-            return job
+            if job["status"] == "queued":
+                preceding = list(self.jobs)[:list(self.jobs).index(job_id)]
+                job["queue_ahead"] = sum(self.jobs[key]["status"] in {"queued", "running"}
+                                         for key in preceding)
+        if job["status"] == "running":
+            job["progress"] = self._engine_progress(job_id)
+        return job
+
+    def _engine_progress(self, job_id):
+        getter = getattr(self.client, "get_progress", None)
+        return getter(job_id) if getter else None
 
     def _work(self):
         while not self.stopping.is_set():
@@ -145,7 +155,7 @@ class SpeechJobs:
             try:
                 ok, message = self.client.generate_speech(
                     request.text, str(path), text_lang=request.language, speed=request.speed,
-                    segmentation=request.segmentation)
+                    segmentation=request.segmentation, request_id=job_id)
                 if not ok:
                     raise RuntimeError(message)
                 with wave.open(str(path), "rb") as audio:
@@ -158,6 +168,9 @@ class SpeechJobs:
                           "language": request.language, "duration": round(duration, 2),
                           "elapsed": round(time.monotonic() - started, 2),
                           "created_at": datetime.now(timezone.utc).isoformat()}
+                progress = self._engine_progress(job_id)
+                if progress and progress.get("timings"):
+                    record["timings"] = progress["timings"]
                 with self.lock:
                     records = [record, *self.records][:50]
                     tmp = self.history_path.with_suffix(".tmp")

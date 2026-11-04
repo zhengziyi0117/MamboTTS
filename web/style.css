@@ -563,53 +563,90 @@ audio::-webkit-media-controls-panel {
 }
 .progress-note {
   display: flex;
-  gap: 12px;
-  align-items: center;
+  flex-direction: column;
+  gap: 10px;
   padding: 16px 0;
   border-top: 1px solid var(--line);
   font-size: 11px;
   color: #858b7a;
 }
-.progress-note > div {
+.progress-heading,
+.progress-detail {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
 }
 .progress-note strong {
   color: #4f5846;
   font-size: 12px;
   font-weight: 500;
 }
-.progress-note > span:last-child {
-  margin-left: auto;
+#elapsed-time,
+#progress-percent {
   font-variant-numeric: tabular-nums;
 }
-.working-bars {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 25px;
+#synthesis-progress {
+  appearance: none;
+  width: 100%;
+  height: 5px;
+  border: 0;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--line);
   color: var(--accent);
 }
-.working-bars i {
-  display: block;
-  background: currentColor;
-  width: 3px;
-  height: 14px;
-  border-radius: 2px;
-  animation: bars 1s ease-in-out infinite alternate;
+#synthesis-progress::-webkit-progress-bar {
+  background: var(--line);
 }
-.working-bars i:nth-child(2) {
-  height: 25px;
-  animation-delay: -0.2s;
+#synthesis-progress:indeterminate::-webkit-progress-bar {
+  background: transparent;
 }
-.working-bars i:nth-child(3) {
-  height: 19px;
-  animation-delay: -0.4s;
+#synthesis-progress::-webkit-progress-value {
+  background: var(--accent);
+  transition: width 180ms ease;
 }
-.working-bars i:nth-child(4) {
-  height: 10px;
-  animation-delay: -0.6s;
+#synthesis-progress::-moz-progress-bar {
+  background: var(--accent);
+}
+#synthesis-progress:indeterminate {
+  background: linear-gradient(
+    90deg,
+    var(--line) 25%,
+    var(--accent) 50%,
+    var(--line) 75%
+  );
+  background-size: 200% 100%;
+  animation: progress-pulse 1.5s ease-in-out infinite;
+}
+@keyframes progress-pulse {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.timing-details {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 16px;
+  font-size: 11px;
+  color: #737b69;
+}
+.timing-details summary {
+  cursor: pointer;
+}
+.timing-details dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  margin: 14px 0 0;
+}
+.timing-details dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 .history-section {
   margin-top: 44px;

@@ -76,6 +76,10 @@ function setBusy(value) {
   $("progress-note").hidden = !value;
   if (clock) clearInterval(clock);
   if (value) {
+    $("progress-title").textContent = "正在提交任务";
+    $("progress-detail").textContent = "正在连接生成队列";
+    $("progress-percent").textContent = "";
+    $("synthesis-progress").removeAttribute("value");
     started = Date.now();
     $("elapsed-time").textContent = "00:00";
     clock = setInterval(() => {
@@ -83,6 +87,76 @@ function setBusy(value) {
     }, 1000);
   }
   updateForm();
+}
+
+function updateProgress(job) {
+  started = Date.now() - (Number(job.elapsed) || 0) * 1000;
+  $("elapsed-time").textContent = duration(job.elapsed);
+  const bar = $("synthesis-progress");
+  const detail = $("progress-detail");
+  const label = $("progress-title");
+  const percentage = $("progress-percent");
+  if (job.status === "queued") {
+    label.textContent = "等待生成";
+    detail.textContent = job.queue_ahead
+      ? `前方还有 ${job.queue_ahead} 个任务`
+      : "即将开始";
+    percentage.textContent = "";
+    bar.removeAttribute("value");
+    return;
+  }
+  const progress = job.progress;
+  const phases = {
+    preparing: "正在准备参考音频",
+    text: "正在处理文案",
+    semantic: "正在生成语音",
+    vocoder: "正在合成声音",
+    packing: "正在整理音频",
+    done: "正在保存音频",
+  };
+  label.textContent = phases[progress?.stage] || "正在生成声音";
+  const total = Number(progress?.total_segments) || 0;
+  const completed = Math.min(
+    total,
+    Math.max(0, Number(progress?.completed_segments) || 0),
+  );
+  if (total) {
+    const percent = Math.floor((completed / total) * 100);
+    bar.value = percent;
+    percentage.textContent = `${percent}%`;
+    detail.textContent = `已完成 ${completed} / ${total} 段`;
+    const tokens = Number(progress.current_tokens) || 0;
+    if (progress.stage === "semantic" && tokens)
+      detail.textContent += ` · 当前段 ${tokens} 个语音 token`;
+    else if (completed < total)
+      detail.textContent += ` · 正在处理第 ${completed + 1} 段`;
+  } else {
+    bar.removeAttribute("value");
+    percentage.textContent = "";
+    detail.textContent = "合成进行中，完成后即可试听";
+  }
+}
+
+function showTimings(record) {
+  const labels = {
+    preparing: "参考音频准备",
+    text: "文案处理",
+    semantic: "语音生成",
+    vocoder: "声音合成",
+    packing: "音频整理",
+  };
+  const list = $("timing-list");
+  list.replaceChildren();
+  for (const [key, label] of Object.entries(labels)) {
+    const seconds = Number(record.timings?.[key]);
+    if (!Number.isFinite(seconds) || seconds < 0) continue;
+    const name = document.createElement("dt");
+    const value = document.createElement("dd");
+    name.textContent = label;
+    value.textContent = `${seconds.toFixed(2)} 秒`;
+    list.append(name, value);
+  }
+  $("timing-details").hidden = !list.children.length;
 }
 async function request(url, options = {}) {
   const controller = new AbortController();
@@ -195,6 +269,7 @@ async function loadHistory() {
 }
 async function selectRecord(record, play = false) {
   selected = record;
+  showTimings(record);
   peaks = null;
   const version = ++waveformVersion;
   audio.src = record.audio_url;
@@ -279,8 +354,7 @@ async function pollJob(id) {
     }
     if (job.status === "error")
       throw new Error(job.error || "配音生成失败，请重试");
-    $("progress-title").textContent =
-      job.status === "queued" ? "任务正在排队" : "正在生成声音";
+    updateProgress(job);
     $("generation-status").textContent = "";
     setTimeout(() => pollJob(id), 800);
   } catch (err) {

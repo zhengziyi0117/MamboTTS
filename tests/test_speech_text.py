@@ -48,6 +48,7 @@ class TextTests(unittest.TestCase):
             audio.setparams((1, 2, 32000, 0, "NONE", "not compressed"))
             audio.writeframes(b"\x00\x10" * 32)
         payloads = []
+        headers = []
 
         class Response:
             status_code = 200
@@ -60,6 +61,7 @@ class TextTests(unittest.TestCase):
 
         def post(url, **kwargs):
             payloads.append(kwargs["json"])
+            headers.append(kwargs["headers"])
             return Response()
 
         client = TTSClient()
@@ -67,13 +69,22 @@ class TextTests(unittest.TestCase):
                 patch.object(client, "is_api_running", return_value=True), \
                 patch("inference.requests.post", side_effect=post):
             path = str(Path(directory) / "result.wav")
-            self.assertTrue(client.generate_speech(STORY, path)[0])
+            self.assertTrue(client.generate_speech(STORY, path, request_id="a" * 32)[0])
             self.assertTrue(client.generate_speech(STORY, path, segmentation="punctuation")[0])
         self.assertEqual(payloads[0]["text"], STORY)
         self.assertEqual(payloads[1]["text"].count("\n"), 2)
         self.assertTrue(all(p["cut_punc"] == "" for p in payloads))
         self.assertEqual(payloads[0]["top_p"], 0.6)
         self.assertEqual(payloads[0]["temperature"], 0.6)
+        self.assertEqual(headers[0]["X-Mambo-Job-ID"], "a" * 32)
+
+    @patch("inference.requests.get")
+    def test_legacy_engine_progress_falls_back_without_repeated_404s(self, get):
+        get.return_value.status_code = 404
+        client = TTSClient()
+        self.assertIsNone(client.get_progress("a" * 32))
+        self.assertIsNone(client.get_progress("a" * 32))
+        self.assertEqual(get.call_count, 1)
 
 
 if __name__ == "__main__":

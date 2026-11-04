@@ -210,16 +210,30 @@
               ><svg class="icon"><use href="#i-download" /></svg>下载 WAV</a
             >
           </div>
-          <div class="progress-note" id="progress-note" hidden>
-            <span class="working-bars" aria-hidden="true"
-              ><i></i><i></i><i></i><i></i
-            ></span>
-            <div>
-              <strong id="progress-title">正在生成声音</strong
-              ><span>完成后会显示试听结果，请稍候。</span>
+          <div
+            class="progress-note"
+            id="progress-note"
+            hidden
+            aria-label="生成进度"
+          >
+            <div class="progress-heading">
+              <strong id="progress-title">正在提交任务</strong>
+              <span id="elapsed-time">00:00</span>
             </div>
-            <span id="elapsed-time">00:00</span>
+            <progress
+              id="synthesis-progress"
+              max="100"
+              aria-label="已完成的合成段落"
+            ></progress>
+            <div class="progress-detail">
+              <span id="progress-detail">正在连接生成队列</span>
+              <span id="progress-percent"></span>
+            </div>
           </div>
+          <details class="timing-details" id="timing-details" hidden>
+            <summary>生成耗时明细</summary>
+            <dl id="timing-list"></dl>
+          </details>
         </aside>
       </div>
 

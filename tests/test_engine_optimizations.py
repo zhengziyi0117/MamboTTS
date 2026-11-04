@@ -27,9 +27,34 @@ def fake_api():
             return [",", "B", "AH1", "G"], None, text
         return [text], [1], text
 
+    def latent(value):
+        counts["latent"] += 1
+        return object()
+
+    def decode(value):
+        counts["decode"] += 1
+        return value
+
+    def predict():
+        return None
+
+    predictor = Namespace(forward=predict)
+
+    def infer():
+        for _ in range(33):
+            predictor.forward()
+        return object()
+
+    def speaker():
+        return Namespace(sovits=Namespace(
+            vq_model=Namespace(extract_latent=latent, decode=decode), hps=hps),
+            gpt=Namespace(t2s_model=Namespace(model=Namespace(
+                infer_panel=infer, ar_predict_layer=predictor))))
+
     api = Namespace(counts=counts, get_spepc=spec, clean_text=clean,
+                    pack_audio=lambda value: value,
                     ssl_model=Namespace(model=Namespace(forward=ssl_forward)),
-                    speaker_list={"default": Namespace(sovits=Namespace(vq_model=object(), hps=hps))})
+                    speaker_list={"default": speaker()})
 
     def phones(text, language, version, final=False):
         counts[("phones", text)] += 1
@@ -42,15 +67,20 @@ def fake_api():
         return result, object(), norm
 
     def tts(path, prompt="参考音频", text="目标文案"):
-        api.ssl_model.model.forward(path)
+        content = api.ssl_model.model.forward(path)
+        api.speaker_list["default"].sovits.vq_model.extract_latent(content)
         api.get_spepc(api.speaker_list["default"].sovits.hps, path)
         api.get_phones_and_bert(prompt, "zh", "v2")
-        api.get_phones_and_bert(text, "zh", "v2")
+        for segment in text.split("\n"):
+            api.get_phones_and_bert(segment, "zh", "v2")
+            semantic = api.speaker_list["default"].gpt.t2s_model.model.infer_panel()
+            audio = api.speaker_list["default"].sovits.vq_model.decode(semantic)
+            api.pack_audio(audio)
         yield b"wav"
 
     api.get_phones_and_bert = phones
     api.get_tts_wav = tts
-    install_optimizations(api)
+    api.progress = install_optimizations(api)
     return api
 
 
@@ -69,6 +99,7 @@ class OptimizationTests(unittest.TestCase):
         list(self.api.get_tts_wav(self.path, text="第二条文案"))
         self.assertEqual(self.api.counts["ssl"], 1)
         self.assertEqual(self.api.counts["spec"], 1)
+        self.assertEqual(self.api.counts["latent"], 1)
         self.assertEqual(self.api.counts[("phones", "参考音频")], 1)
         self.assertEqual(self.api.counts[("phones", "第二条文案")], 1)
 
@@ -78,12 +109,30 @@ class OptimizationTests(unittest.TestCase):
         list(self.api.get_tts_wav(self.path))
         self.assertEqual(self.api.counts["ssl"], 2)
         self.assertEqual(self.api.counts["spec"], 2)
+        previous = self.api.speaker_list["default"].sovits.vq_model
         self.api.speaker_list["default"].sovits = Namespace(
-            vq_model=object(), hps=Namespace(data=Namespace(sampling_rate=16000,
+            vq_model=Namespace(extract_latent=previous.extract_latent.__wrapped__,
+                               decode=previous.decode.__wrapped__),
+            hps=Namespace(data=Namespace(sampling_rate=16000,
                 filter_length=1024, hop_length=320, win_length=1024)))
         list(self.api.get_tts_wav(self.path))
         self.assertEqual(self.api.counts["ssl"], 3)
         self.assertEqual(self.api.counts["spec"], 3)
+        self.assertEqual(self.api.counts["latent"], 3)
+
+    def test_progress_counts_actual_segments_and_autoregressive_steps(self):
+        job_id = "a" * 32
+        self.api.progress.start(job_id)
+        token = self.api.progress.current.set(job_id)
+        try:
+            list(self.api.get_tts_wav(self.path, text="第一句\n第二句"))
+        finally:
+            self.api.progress.current.reset(token)
+        progress = self.api.progress.get(job_id)
+        self.assertEqual(progress["completed_segments"], 2)
+        self.assertEqual(progress["total_segments"], 2)
+        self.assertEqual(progress["current_tokens"], 33)
+        self.assertIn("semantic", progress["timings"])
 
     def test_short_english_in_mixed_text_drops_only_injected_comma(self):
         mixed, _, _ = self.api.get_phones_and_bert("这是bug", "zh", "v2")
