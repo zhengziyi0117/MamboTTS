@@ -4,6 +4,7 @@ import re
 import wave
 import shutil
 import subprocess
+import signal
 import time
 import threading
 import webbrowser
@@ -251,14 +252,16 @@ class MamboTTSApp(QMainWindow):
             return
 
         # 检查 GPT-SoVITS 是否已安装：未安装时立刻明示，而不是等 60 秒误报「启动超时」
-        gsv_dir = os.path.join(base_dir, "GPT-SoVITS")
+        from run_engine import engine_paths
+        gsv_dir = engine_paths(base_dir)["gsv_dir"]
         if not os.path.exists(gsv_dir):
             self._engine_installed = False
             self._engine_timeout_logged = True  # 无需再走超时分支
-            self.log_line.emit("ERROR", "GPT-SoVITS 未安装，请先运行 MamboTTS.bat 完成一键安装。")
+            install_hint = "MamboTTS.bat" if sys.platform == "win32" else "./install.sh --backend rocm --desktop"
+            self.log_line.emit("ERROR", f"GPT-SoVITS 未安装，请先运行 {install_hint}。")
             self._set_engine_status("error", "✕ 未安装引擎")
-            self._set_action_status("error", "请先运行 MamboTTS.bat 安装引擎（约 8GB，一次性）")
-            self.btn_generate.setToolTip("请先运行 MamboTTS.bat 安装引擎")
+            self._set_action_status("error", f"请先运行 {install_hint} 安装引擎")
+            self.btn_generate.setToolTip(f"请先运行 {install_hint} 安装引擎")
             # 当前窗口内直接给安装入口（launcher 未拦截到的调试路径也能自救）
             self.btn_engine_retry.setText("打开安装引导")
             self.btn_engine_retry.setVisible(True)
@@ -278,6 +281,7 @@ class MamboTTSApp(QMainWindow):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 creationflags=creation_flags,
+                start_new_session=sys.platform != "win32",
                 bufsize=1,
                 universal_newlines=True,
                 encoding="utf-8",
@@ -312,6 +316,8 @@ class MamboTTSApp(QMainWindow):
             return
         try:
             for line in iter(stream.readline, ''):
+                if self._closing:
+                    break
                 line = line.rstrip()
                 if not line:
                     continue
@@ -450,10 +456,11 @@ class MamboTTSApp(QMainWindow):
                 self._api_check_timer.setInterval(5000)  # 保留轮询，外部手动起引擎时能自动恢复
             return
 
-        # 超时判断：60 秒还没起来先提示，降频继续轮询（慢机器冷启动可能超过 60s）
-        if elapsed > 60 and not self._engine_timeout_logged:
+        # Linux CPU / 核显冷启动与首次中文处理比独显慢。
+        startup_timeout = 60 if sys.platform == "win32" else 300
+        if elapsed > startup_timeout and not self._engine_timeout_logged:
             self._engine_timeout_logged = True
-            self.log_line.emit("ERROR", "引擎启动超过 60 秒仍未就绪。将继续在后台检测；若模型已就位可稍候，或查看日志排查。")
+            self.log_line.emit("ERROR", f"引擎启动超过 {startup_timeout} 秒仍未就绪。将继续在后台检测；若模型已就位可稍候，或查看日志排查。")
             self._set_engine_status("error", "✕ 引擎启动超时")
             self._set_action_status("error", "仍在后台检测引擎状态；可查看运行日志排查，或重新启动客户端")
             self.btn_engine_retry.setVisible(True)
@@ -1055,7 +1062,12 @@ class MamboTTSApp(QMainWindow):
             except Exception as e:
                 self.append_log("WARNING",
                                 f"关闭引擎子进程异常: {e}。若下次启动报 9880 端口占用，"
-                                f"请手动结束残留的 runtime/python.exe 进程。")
+                                f"请检查残留的 GPT-SoVITS 进程。")
+            log_thread = getattr(self, "_engine_log_thread", None)
+            if log_thread is not None:
+                log_thread.join(timeout=2)
+            if not (log_thread is not None and log_thread.is_alive()) and self.engine_proc.stdout:
+                self.engine_proc.stdout.close()
             self.engine_proc = None
         # 保存配置
         self.save_config()
@@ -1064,10 +1076,14 @@ class MamboTTSApp(QMainWindow):
     def _terminate_engine_tree(self, pid):
         """按进程树终止引擎子进程及其所有派生进程（含孙子进程 api.py）。
 
-        Windows 用 taskkill /T /F <pid>；非 Windows 由调用方 terminate 兜底。
+        Windows 用 taskkill；Linux 关闭启动时创建的独立进程组。
         静默处理失败，由调用方兜底。
         """
         if sys.platform != "win32":
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             return
         try:
             subprocess.run(

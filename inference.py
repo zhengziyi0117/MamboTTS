@@ -5,6 +5,7 @@ import requests
 from engine_contract import (
     SUPPORTED_LANGS, DEFAULT_REF_TEXT, CUT_PUNC, DEFAULT_API_URL, REF_WAV,
 )  # 契约常量单一来源（engine_contract.py），这里透传保持旧引用兼容
+from text_processing import split_speech_text
 
 logger = logging.getLogger("mambotts.inference")
 
@@ -114,7 +115,8 @@ class TTSClient:
         return None
 
     def generate_speech(self, text, save_path, ref_audio="", prompt_text="",
-                        text_lang="zh", prompt_lang="zh", speed=1.0, api_url=None):
+                        text_lang="zh", prompt_lang="zh", speed=1.0, api_url=None,
+                        segmentation="sentence"):
         """
         调用 GPT-SoVITS 本地 API 生成语音。
         api_url: 显式快照，避免合成进行中主线程修改 self.api_url 引发竞态。
@@ -126,6 +128,13 @@ class TTSClient:
         err = self._check_writable_dir(save_path)
         if err:
             return False, err
+
+        try:
+            segments = split_speech_text(text, segmentation)
+        except ValueError as exc:
+            return False, str(exc)
+        if not segments:
+            return False, "请输入包含文字的配音文案。"
 
         base_url = (api_url or self.api_url).rstrip("/")
         online = self.is_api_running(api_url=base_url)
@@ -153,12 +162,16 @@ class TTSClient:
 
         # GPT-SoVITS api.py 字段名（旧版）: refer_wav_path / prompt_language /
         # text_language / speed / cut_punc
-        # cut_punc: 按标点切分长文本，绕过单次合成长度限制（约208字）
+        # 客户端已规划段落，不再让引擎按逗号二次切分。
+        # 上游 HTTP 默认 top_p/temperature=1，使用较保守的采样降低韵律波动。
         params = {
-            "text": text,
+            "text": "\n".join(segments),
             "text_language": text_lang,
             "speed": speed,
-            "cut_punc": CUT_PUNC,
+            "cut_punc": "",
+            "top_k": 15,
+            "top_p": 0.6,
+            "temperature": 0.6,
         }
 
         # 参考音频：优先用调用方传入的，否则用默认 refer.wav
@@ -171,10 +184,17 @@ class TTSClient:
 
         # 读超长按文本量伸缩：约每字 1 秒，下限 120s，上限 600s。
         # 长文案在消费级 GPU 上合成远超 60 秒，固定超时必然误报。
-        read_timeout = min(600.0, max(120.0, len(text) * 1.0))
+        default_timeout = 120.0 if os.name == "nt" else 600.0
+        try:
+            configured_timeout = float(os.environ.get("MAMBO_TTS_TIMEOUT", default_timeout))
+            if not 1 <= configured_timeout <= 86400:
+                raise ValueError
+        except ValueError:
+            configured_timeout = default_timeout
+        read_timeout = max(configured_timeout, min(600.0, len(text) * 1.0))
 
         try:
-            self._log("INFO", f"正在请求 GPT-SoVITS API 合成文本: {text[:20]}...")
+            self._log("INFO", f"正在合成 {len(segments)} 段文案（{segmentation}）: {text[:20]}...")
             # POST / + JSON body：与 GET 字段完全一致（见 api.py tts_endpoint）。
             # 不用 GET 是避免长文案 URL 编码后超长（h11 行上限 16KB，
             # 约 600 个汉字即触发 414/400）。

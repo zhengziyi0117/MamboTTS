@@ -1,0 +1,2 @@
+# Web API 测试使用 FastAPI TestClient；运行工作台不需要安装。
+httpx>=0.27,<1

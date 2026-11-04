@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f4ef" />
+    <title>MamboTTS · 配音工作台</title>
+    <link
+      rel="preload"
+      href="/static/fonts/mambo-sans.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23ed673d'/%3E%3Cpath d='M16 42V25l8 10 8-15 8 15 8-10v17' fill='none' stroke='%23fff' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <svg
+      class="icon-definitions"
+      aria-hidden="true"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <symbol id="i-wave" viewBox="0 0 24 24">
+        <path d="M3 10v4m4-7v10m5-14v18m5-14v10m4-7v4" />
+      </symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="m9 5 10 7-10 7Z" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </symbol>
+    </svg>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="MamboTTS 首页">
+        <span class="brand-mark"
+          ><svg viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M5 23V11l6 8 5-13 5 13 6-8v12" /></svg
+        ></span>
+        <span>MAMBO<span class="brand-tts">TTS</span></span>
+      </a>
+      <span class="topbar-label">配音工作台</span>
+      <div
+        class="engine-state"
+        id="engine-state"
+        data-state="loading"
+        role="status"
+      >
+        <span class="status-dot"></span
+        ><span id="engine-label">正在连接引擎</span>
+      </div>
+    </header>
+
+    <main>
+      <div class="workspace-heading">
+        <div>
+          <p class="eyebrow">VOICE WORKSPACE</p>
+          <h1>曼波配音工作台<span>。</span></h1>
+        </div>
+        <span class="workspace-note"
+          ><svg class="icon"><use href="#i-wave" /></svg>曼波音色 ·
+          本地生成</span
+        >
+      </div>
+
+      <div class="workspace">
+        <section class="editor" aria-labelledby="editor-title">
+          <form id="speech-form">
+            <div class="section-heading">
+              <h2 id="editor-title">配音文案</h2>
+              <button type="button" class="text-button" id="example-button">
+                填入示例 <span aria-hidden="true">↗</span>
+              </button>
+            </div>
+            <div class="text-field">
+              <label class="sr-only" for="speech-text">配音文案</label>
+              <textarea
+                id="speech-text"
+                name="text"
+                maxlength="2000"
+                placeholder="在这里输入你的故事……&#10;&#10;标点会帮助声音自然停顿。"
+                required
+              ></textarea>
+              <div class="text-field-footer">
+                <span>支持多段文案</span
+                ><span><b id="text-count">0</b> / 2,000</span>
+              </div>
+            </div>
+
+            <div class="settings">
+              <div class="language-setting">
+                <label for="language">文案语言</label
+                ><select id="language" name="language">
+                  <option value="zh">中文</option>
+                  <option value="en">英语</option>
+                  <option value="ja">日语</option>
+                  <option value="auto">自动识别</option>
+                </select>
+              </div>
+              <div class="speed-setting">
+                <label for="speed"
+                  >语速
+                  <output id="speed-value" for="speed">1.00×</output></label
+                ><input
+                  id="speed"
+                  name="speed"
+                  type="range"
+                  min="0.5"
+                  max="2"
+                  step="0.05"
+                  value="1"
+                />
+                <div class="range-labels">
+                  <span>舒缓 0.5×</span
+                  ><button class="text-button" type="button" id="reset-speed">
+                    重置</button
+                  ><span>轻快 2.0×</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="phrasing-setting">
+              <label for="segmentation">断句方式</label>
+              <select id="segmentation" name="segmentation">
+                <option value="sentence">完整句子（推荐）</option>
+                <option value="punctuation">按逗号分句</option>
+              </select>
+              <p id="segmentation-hint">
+                保留句内上下文；需要停下来时，可以手动换行。
+              </p>
+            </div>
+
+            <div class="generate-actions">
+              <button
+                class="primary-button"
+                id="generate-button"
+                type="submit"
+                disabled
+              >
+                <svg class="icon generate-wave"><use href="#i-wave" /></svg
+                ><span id="generate-label">生成配音</span
+                ><svg class="icon button-arrow">
+                  <use href="#i-arrow" />
+                </svg></button
+              ><span class="shortcut"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+            </div>
+            <div
+              class="generation-status"
+              id="generation-status"
+              role="status"
+              aria-live="polite"
+            ></div>
+            <div
+              class="error-message"
+              id="error-message"
+              role="alert"
+              hidden
+            ></div>
+          </form>
+        </section>
+
+        <aside class="preview" aria-labelledby="preview-title">
+          <div class="section-heading">
+            <h2 id="preview-title">声音预览</h2>
+            <span class="format-label">WAV</span>
+          </div>
+          <div class="audio-surface" id="audio-surface">
+            <div class="audio-surface-top">
+              <span class="audio-symbol"
+                ><svg class="icon"><use href="#i-wave" /></svg></span
+              ><span id="audio-tag">MAMBO VOICE</span
+              ><span class="audio-number" id="audio-number">—:—</span>
+            </div>
+            <div class="waveform-wrap">
+              <canvas id="waveform" role="img" aria-label="音频波形"></canvas>
+              <div class="preview-empty" id="preview-empty">
+                <svg class="icon"><use href="#i-wave" /></svg>
+                <p>等你的第一段声音</p>
+                <span>生成后，即可在这里试听</span>
+              </div>
+            </div>
+            <p id="preview-text" class="preview-text" hidden></p>
+            <audio
+              id="audio-player"
+              controls
+              preload="metadata"
+              hidden
+              aria-label="配音试听播放器"
+            ></audio>
+            <div class="audio-surface-footer">
+              <span id="audio-details">音频保存在本机</span
+              ><span class="record-light"></span>
+            </div>
+          </div>
+          <div class="preview-actions">
+            <span id="preview-caption">生成后支持在线播放与下载</span
+            ><a class="download-button" id="download-button" hidden
+              ><svg class="icon"><use href="#i-download" /></svg>下载 WAV</a
+            >
+          </div>
+          <div class="progress-note" id="progress-note" hidden>
+            <span class="working-bars" aria-hidden="true"
+              ><i></i><i></i><i></i><i></i
+            ></span>
+            <div>
+              <strong id="progress-title">正在生成声音</strong
+              ><span>完成后会显示试听结果，请稍候。</span>
+            </div>
+            <span id="elapsed-time">00:00</span>
+          </div>
+        </aside>
+      </div>
+
+      <section class="history-section" aria-labelledby="history-title">
+        <div class="section-heading">
+          <h2 id="history-title">
+            最近生成 <span id="history-count">00</span>
+          </h2>
+          <span class="history-note">最近 50 条 · 点击试听</span>
+        </div>
+        <div class="history-list" id="history-list">
+          <div class="history-empty">
+            还没有生成记录。写一段文案，试试曼波的声音。
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="page-footer">
+      <span>MamboTTS</span><span>文案与音频保存在你的小主机上</span>
+    </footer>
+  </body>
+</html>

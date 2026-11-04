@@ -44,6 +44,11 @@ def is_installed():
        用标记/torch 双重校验识别「半成品」。
     """
     base = _project_dir()
+    if sys.platform != "win32":
+        from run_engine import engine_paths
+        paths = engine_paths(base)
+        return all(os.path.exists(paths[key]) for key in ("api_py", "python_exe")) and os.path.isfile(
+            os.path.join(paths["gsv_dir"], INSTALL_MARKER))
     gsv_dir = os.path.join(base, "GPT-SoVITS")
     api_py = os.path.join(gsv_dir, "api.py")
     runtime_python = os.path.join(gsv_dir, "runtime", "python.exe")
@@ -476,6 +481,12 @@ def main():
         # 已安装：直接进主界面
         _show_main_window()
         sys.exit(app.exec())
+
+    if sys.platform != "win32":
+        QMessageBox.information(None, "安装 Linux 引擎",
+                                "请先在项目目录运行 ./install.sh --backend rocm --desktop。\n"
+                                "安装后使用 ./run.sh --desktop 启动客户端，或 ./run.sh 启动 API。")
+        return
 
     # 未安装：弹窗提示（用最大包估算，避免提示偏小导致中途盘满）
     max_need_gb = max(p["size_bytes"] for p in GPU_PACKAGES.values()) * 3.6 / (1024 ** 3)

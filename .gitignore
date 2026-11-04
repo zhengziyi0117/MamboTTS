@@ -28,3 +28,6 @@ launcher_error.log
 *.log
 history.json
 wheelhouse/
+models/*.pth
+models/*.ckpt
+outputs/

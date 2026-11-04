@@ -35,5 +35,6 @@ API_HOST = "127.0.0.1"
 API_PORT = 9880
 DEFAULT_API_URL = f"http://{API_HOST}:{API_PORT}"
 
-# 长文本按标点切分清单（cut_punc 参数）：绕过单次合成长度限制（约 208 字）
+# 旧版逐标点切分清单，保留供外部调用方引用。
+# 当前客户端通过 text_processing 规划段落，向引擎传 cut_punc=""。
 CUT_PUNC = "，。？！；：、…,.;?!"
