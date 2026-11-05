@@ -62,6 +62,20 @@ class GenerateRequest(BaseModel):
         return value
 
 
+def segment_timeline(segments, seconds):
+    """每段在整条音频里的起止秒数（end 含上游段尾 0.3 秒静音）；段数对不上就不给。"""
+    if not seconds:
+        return None
+    if len(seconds) != len(segments):
+        logger.warning("引擎报告 %d 段时长，文案切成 %d 段，不生成时间轴", len(seconds), len(segments))
+        return None
+    timeline, start = [], 0.0
+    for text, length in zip(segments, seconds):
+        timeline.append({"text": text, "start": round(start, 3), "end": round(start + length, 3)})
+        start += length
+    return timeline
+
+
 class SpeechJobs:
     """单个推理队列，避免多个浏览器同时占满核显内存。"""
     def __init__(self, output_dir, client):
@@ -171,6 +185,9 @@ class SpeechJobs:
                 progress = self._engine_progress(job_id)
                 if progress and progress.get("timings"):
                     record["timings"] = progress["timings"]
+                timeline = segment_timeline(record["segments"], (progress or {}).get("segment_seconds"))
+                if timeline:
+                    record["timeline"] = timeline
                 with self.lock:
                     records = [record, *self.records][:50]
                     tmp = self.history_path.with_suffix(".tmp")

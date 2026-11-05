@@ -189,10 +189,11 @@ def install_optimizations(api):
         original_audio = api.pack_audio
 
         @wraps(original_audio)
-        def pack_audio(*args, **kwargs):
-            result = original_audio(*args, **kwargs)
+        def pack_audio(audio_bytes, data, rate):
+            result = original_audio(audio_bytes, data, rate)
             # 已经过 .cpu() 同步和 PCM 转换，才算这段音频真正完成。
-            progress.segment_done()
+            # 上游每段调用一次，data 是该段语音加段尾 0.3 秒静音。
+            progress.segment_done(len(data) / rate)
             return result
 
         api.pack_audio = pack_audio

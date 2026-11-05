@@ -102,12 +102,16 @@ class WebTests(unittest.TestCase):
 
     def test_phrasing_choice_is_used_and_persisted_with_actual_segments(self):
         text = "城市一夜冰封，我才明白那不是bug"
+        self.engine.progress = {"segment_seconds": [1.25, 0.75]}
         response = self.client.post("/api/generate", json={"text": text, "segmentation": "punctuation"})
         self.assertEqual(response.status_code, 202)
         job = self.wait_job(response.json()["id"])
         self.assertEqual(job["status"], "done")
         self.assertEqual(self.engine.last_options["segmentation"], "punctuation")
         self.assertEqual(job["record"]["segments"], ["城市一夜冰封，", "我才明白那不是bug"])
+        self.assertEqual(job["record"]["timeline"], [
+            {"text": "城市一夜冰封，", "start": 0.0, "end": 1.25},
+            {"text": "我才明白那不是bug", "start": 1.25, "end": 2.0}])
         restored = create_app(self.temp.name, client=self.engine)
         self.assertEqual(restored.state.jobs.history()[0]["segmentation"], "punctuation")
 

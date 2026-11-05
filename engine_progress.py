@@ -23,7 +23,7 @@ class EngineProgress:
             if len(self.jobs) >= 100:
                 return False
             self.jobs[job_id] = {"stage": "preparing", "completed_segments": 0,
-                                 "total_segments": 0, "current_tokens": 0,
+                                 "total_segments": 0, "current_tokens": 0, "segment_seconds": (),
                                  "timings": {}, "_started": now, "_phase_started": now}
             return True
 
@@ -41,11 +41,14 @@ class EngineProgress:
                 job["_phase_started"] = now
             job.update(fields)
 
-    def segment_done(self):
+    def segment_done(self, seconds=None):
         with self.lock:
             job = self.jobs.get(self.current.get())
             if job is not None:
                 job["completed_segments"] = min(job["total_segments"], job["completed_segments"] + 1)
+                if seconds is not None:
+                    # 元组：get() 浅拷贝后在锁外序列化，不能和后续追加共用一个 list。
+                    job["segment_seconds"] = (*job["segment_seconds"], seconds)
 
     def get(self, job_id):
         with self.lock:

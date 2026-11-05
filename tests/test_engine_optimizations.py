@@ -52,7 +52,7 @@ def fake_api():
                 infer_panel=infer, ar_predict_layer=predictor))))
 
     api = Namespace(counts=counts, get_spepc=spec, clean_text=clean,
-                    pack_audio=lambda value: value,
+                    pack_audio=lambda audio_bytes, data, rate: audio_bytes,
                     ssl_model=Namespace(model=Namespace(forward=ssl_forward)),
                     speaker_list={"default": speaker()})
 
@@ -75,7 +75,7 @@ def fake_api():
             api.get_phones_and_bert(segment, "zh", "v2")
             semantic = api.speaker_list["default"].gpt.t2s_model.model.infer_panel()
             audio = api.speaker_list["default"].sovits.vq_model.decode(semantic)
-            api.pack_audio(audio)
+            api.pack_audio(b"", [0] * 16000, 32000)
         yield b"wav"
 
     api.get_phones_and_bert = phones
@@ -130,6 +130,7 @@ class OptimizationTests(unittest.TestCase):
             self.api.progress.current.reset(token)
         progress = self.api.progress.get(job_id)
         self.assertEqual(progress["completed_segments"], 2)
+        self.assertEqual(progress["segment_seconds"], (0.5, 0.5))
         self.assertEqual(progress["total_segments"], 2)
         self.assertEqual(progress["current_tokens"], 33)
         self.assertIn("semantic", progress["timings"])

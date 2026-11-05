@@ -71,6 +71,11 @@ sudo pacman -S --needed git curl ffmpeg uv base-devel cmake
 ```
 
 Web 端口默认 `7860`，引擎端口默认 `9880`，可用 `--engine-port` 调整后者。
+
+脚本调用（例如给视频配字幕）：`POST /api/generate` 提交 `{"text", "speed", "language", "segmentation"}`，
+返回任务 `id`；轮询 `GET /api/jobs/{id}` 到 `status` 为 `done`，再从 `record.audio_url` 下载 WAV。
+`record.timeline` 给出每段的 `{text, start, end}`（秒），`end` 含上游段尾 0.3 秒静音。
+想让某几个字单独成段、拿到它的起点，就把它单独放一行。连接未升级的旧引擎时没有 `timeline`。
 多设备同时提交时，生成任务会排队执行，避免同时占满核显内存。
 
 首次安装会下载约数 GB 的依赖和模型。预留至少 12GB 磁盘空间，建议 16GB 以上内存。
